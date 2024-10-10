@@ -1,0 +1,148 @@
+{
+    "algo_name": "cqn",
+    "experiment": {
+        "name": "test",
+        "validate": false,
+        "logging": {
+            "terminal_output_to_txt": true,
+            "log_tb": true,
+            "log_wandb": false,
+            "wandb_proj_name": "debug"
+        },
+        "save": {
+            "enabled": true,
+            "every_n_seconds": null,
+            "every_n_epochs": 50,
+            "epochs": [],
+            "on_best_validation": false,
+            "on_best_rollout_return": false,
+            "on_best_rollout_success_rate": true
+        },
+        "epoch_every_n_steps": 100,
+        "validation_epoch_every_n_steps": 10,
+        "env": null,
+        "additional_envs": null,
+        "render": false,
+        "render_video": true,
+        "keep_all_videos": false,
+        "video_skip": 5,
+        "rollout": {
+            "enabled": true,
+            "n": 50,
+            "horizon": 400,
+            "rate": 50,
+            "warmstart": 0,
+            "terminate_on_success": true
+        }
+    },
+    "train": {
+        "data": null,
+        "output_dir": "../../cqn_trained_models",
+        "num_data_workers": 0,
+        "hdf5_cache_mode": "all",
+        "hdf5_use_swmr": true,
+        "hdf5_load_next_obs": true,
+        "hdf5_normalize_obs": false,
+        "hdf5_filter_key": null,
+        "hdf5_validation_filter_key": null,
+        "seq_length": 1,
+        "pad_seq_length": true,
+        "frame_stack": 1,
+        "pad_frame_stack": true,
+        "dataset_keys": [
+            "actions",
+            "rewards",
+            "dones"
+        ],
+        "goal_mode": null,
+        "cuda": true,
+        "batch_size": 100,
+        "num_epochs": 2000,
+        "seed": 1
+    },
+    "algo": {
+        "discount": 1.0,
+        "n_step": 3,
+        "optim_params": {
+            "critic": {
+                "optimizer_type": "adamw",
+                "learning_rate": {
+                    "initial": 0.0003
+                },
+                "regularization": {
+                    "L2": 0.0
+                }
+            },
+            "bc_loss_weight": 1.0,
+            "rl_loss_weight": 0.1
+        },
+        "target_tau": 0.01,
+        "levels": 3,
+        "bins": 5,
+        "atoms": 51,
+        "v_min": -1,
+        "v_max": 1,
+        "critic": {
+            "layer_dims": [
+                512,
+                512
+            ],
+            "value_bounds": null,
+            "bias": false,
+            "activation": "silu",
+            "layer_norm": true
+        }
+    },
+    "observation": {
+        "modalities": {
+            "obs": {
+                "low_dim": [
+                    "robot0_eef_pos",
+                    "robot0_eef_quat",
+                    "robot0_gripper_qpos",
+                    "object"
+                ],
+                "rgb": [],
+                "depth": [],
+                "scan": []
+            },
+            "goal": {
+                "low_dim": [],
+                "rgb": [],
+                "depth": [],
+                "scan": []
+            }
+        },
+        "encoder": {
+            "low_dim": {
+                "core_class": null,
+                "core_kwargs": {},
+                "obs_randomizer_class": null,
+                "obs_randomizer_kwargs": {}
+            },
+            "rgb": {
+                "core_class": "VisualCore",
+                "core_kwargs": {},
+                "obs_randomizer_class": null,
+                "obs_randomizer_kwargs": {}
+            },
+            "depth": {
+                "core_class": "VisualCore",
+                "core_kwargs": {},
+                "obs_randomizer_class": null,
+                "obs_randomizer_kwargs": {}
+            },
+            "scan": {
+                "core_class": "ScanCore",
+                "core_kwargs": {},
+                "obs_randomizer_class": null,
+                "obs_randomizer_kwargs": {}
+            }
+        }
+    },
+    "meta": {
+        "hp_base_config_file": null,
+        "hp_keys": [],
+        "hp_values": []
+    }
+}
