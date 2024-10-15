@@ -46,16 +46,18 @@ class CQN(PolicyAlgo, ValueAlgo):
         Create networks and places them into @self.nets.
         """
         self.nets = nn.ModuleDict()
+        critic_class = ValueNets.DistributionalActionValueNetwork
         critic_args = dict(
             obs_shapes=self.obs_shapes,
-            goal_shapes=self.goal_shapes,
             ac_dim=self.ac_dim,
             mlp_layer_dims=self.algo_config.critic.layer_dims,
             value_bounds=self.algo_config.critic.value_bounds,
+            num_atoms=self.algo_config.critic.distributional.num_atoms,
+            goal_shapes=self.goal_shapes,
             encoder_kwargs=ObsUtils.obs_encoder_kwargs_from_config(self.obs_config.encoder),
         )
-        self.nets["critic"] = ValueNets.ActionValueNetwork(**critic_args)
-        self.nets["critic_target"] = ValueNets.ActionValueNetwork(**critic_args)
+        self.nets["critic"] = critic_class(**critic_args)
+        self.nets["critic_target"] = critic_class(**critic_args)
 
         # sync target networks at start of training
         with torch.no_grad():

@@ -35,25 +35,34 @@ class CQNConfig(BaseConfig):
         # target network parameters
         self.algo.target_tau = 0.01
 
-        # C2F parameters
-        self.algo.levels = 3       # number of levels in the C2F hierarchy
-        self.algo.bins = 5         # number of bins in each level
-
-        # C51 parameters
-        self.algo.atoms = 51
-        self.algo.v_min = -1
-        self.algo.v_max = 1
-
         ##################### Critic Network Config #####################
-        self.algo.critic.layer_dims = (512, 512)
-        self.algo.critic.value_bounds = None
-        self.algo.critic.bias = False            # TODO: unable to use currently
-        self.algo.critic.activation = "silu"     # TODO: unable to use currently
-        self.algo.critic.layer_norm = True       # TODO: unable to use currently
+        self.algo.critic.layer_dims = (256, 256)
+        self.algo.critic.value_bounds = (-1, 1)
+
+        # C2F parameters
+        self.algo.critic.input_min = -1    # action lower bound
+        self.algo.critic.input_max = 1     # action upper bound
+        self.algo.critic.levels = 3        # number of levels in the C2F hierarchy
+        self.algo.critic.bins = 5          # number of bins in each level
+
+        # C51 (distributional) parameters
+        self.algo.critic.distributional.enabled = False
+        self.algo.critic.distributional.num_atoms = 51
 
     def observation_config(self):
         super(CQNConfig, self).observation_config()
-        # TODO
+
+        # observation modalities
+        self.observation.modalities.obs.low_dim = [
+            "robot0_eef_pos",
+            "robot0_eef_quat",
+            "robot0_gripper_qpos",
+            "object",
+        ]
+        self.observation.modalities.obs.rgb = [
+            # "agentview_image",
+            # "robot0_eye_in_hand_image"
+        ]
     
     def meta_config(self):
         super(CQNConfig, self).meta_config()

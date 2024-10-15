@@ -77,20 +77,23 @@
             "rl_loss_weight": 0.1
         },
         "target_tau": 0.01,
-        "levels": 3,
-        "bins": 5,
-        "atoms": 51,
-        "v_min": -1,
-        "v_max": 1,
         "critic": {
             "layer_dims": [
-                512,
-                512
+                256,
+                256
             ],
-            "value_bounds": null,
-            "bias": false,
-            "activation": "silu",
-            "layer_norm": true
+            "value_bounds": [
+                -1,
+                1
+            ],
+            "input_min": -1,
+            "input_max": 1,
+            "levels": 3,
+            "bins": 5,
+            "distributional": {
+                "enabled": false,
+                "num_atoms": 51
+            }
         }
     },
     "observation": {
