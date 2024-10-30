@@ -14,6 +14,8 @@ class CQNConfig(BaseConfig):
     def train_config(self):
         super(CQNConfig, self).train_config()
         self.train.output_dir = f"../../{self.algo_name}_trained_models"
+        self.train.batch_size = 256
+        self.train.num_epochs = 200
 
     def algo_config(self):
         """
@@ -23,8 +25,9 @@ class CQNConfig(BaseConfig):
         training and test-time behavior should be populated here.
         """
 
-        self.algo.discount = 1.0   # discount factor
-        self.algo.n_step = 3       # for using n-step returns in TD-updates
+        self.algo.discount = .99            # discount factor
+        self.algo.n_step = 1                # for n-step returns in TD updates
+        self.algo.infinite_horizon = False  # scale terminal rewards if true
 
         # optimizer parameters
         self.algo.optim_params.critic.optimizer_type = "adamw"
@@ -38,6 +41,7 @@ class CQNConfig(BaseConfig):
         ##################### Critic Network Config #####################
         self.algo.critic.layer_dims = (256, 256)
         self.algo.critic.value_bounds = (-1, 1)
+        self.algo.critic.max_gradient_norm = None       # L2 gradient clipping for critic (None to use no clipping)
 
         # C2F parameters
         self.algo.critic.input_min = -1    # action lower bound
@@ -57,7 +61,7 @@ class CQNConfig(BaseConfig):
             "robot0_eef_pos",
             "robot0_eef_quat",
             "robot0_gripper_qpos",
-            "object",
+            "object",  # comment for image, uncomment for low dim
         ]
         self.observation.modalities.obs.rgb = [
             # "agentview_image",

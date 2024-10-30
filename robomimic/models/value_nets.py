@@ -6,6 +6,7 @@ action-value estimates or distributions.
 """
 import numpy as np
 from collections import OrderedDict
+from collections.abc import Iterable
 
 import torch
 import torch.nn as nn
@@ -316,3 +317,196 @@ class DistributionalActionValueNetwork(ActionValueNetwork):
 
     def _to_string(self):
         return "action_dim={}\nvalue_bounds={}\nnum_atoms={}".format(self.ac_dim, self.value_bounds, self.num_atoms)
+
+
+class C2FLayerNetwork(ValueNetwork):
+    """
+    A single layer of a coarse-to-fine Q-network. For a C2F Q-network with L 
+    layers and B bins per layer, the output of each layer is a vector of 
+    length B indicating the value of the Q-function at that bin. This network 
+    implements just one of these layers.
+    """
+
+    def __init__(
+        self,
+        obs_shapes: OrderedDict,
+        ac_dim: int,
+        mlp_layer_dims: list[int],
+        levels: int,
+        bins: int,
+        value_bounds: tuple[int, int] | None = None,
+        goal_shapes: OrderedDict | None = None,
+        encoder_kwargs: dict | None = None,
+    ):
+        """
+        Args:
+            obs_shapes (OrderedDict): a dictionary that maps observation keys 
+                to expected shapes for observations.
+
+            ac_dim (int): dimension of action space.
+
+            mlp_layer_dims ([int]): sequence of integers for the MLP hidden 
+                layers sizes. 
+            
+            levels (int): number of levels in the C2F hierarchy.
+
+            bins (int): number of bins in each level.
+
+            value_bounds (tuple): a 2-tuple corresponding to the lowest and 
+                highest possible return that the network should be possible of 
+                generating. The network will rescale outputs using a tanh layer 
+                to lie within these bounds. If None, no tanh re-scaling is done.
+
+            goal_shapes (OrderedDict): a dictionary that maps observation keys 
+                to expected shapes for goal observations.
+
+            encoder_kwargs (dict or None): If None, results in default 
+                encoder_kwargs being applied. Otherwise, should be nested 
+                dictionary containing relevant per-observation key information 
+                for encoder networks.  Should be of form:
+
+                obs_modality1: dict
+                    feature_dimension: int
+                    core_class: str
+                    core_kwargs: dict
+                        ...
+                        ...
+                    obs_randomizer_class: str
+                    obs_randomizer_kwargs: dict
+                        ...
+                        ...
+                obs_modality2: dict
+                    ...
+        """
+        self.levels = levels
+        self.bins = bins
+        self.ac_dim = ac_dim
+
+        new_obs_shapes = OrderedDict(obs_shapes)
+        new_obs_shapes["level"] = (levels,)
+        new_obs_shapes["prev_action"] = (ac_dim,)
+        super(C2FLayerNetwork, self).__init__(
+            obs_shapes=new_obs_shapes,
+            mlp_layer_dims=mlp_layer_dims,
+            value_bounds=value_bounds,
+            goal_shapes=goal_shapes,
+            encoder_kwargs=encoder_kwargs,
+        )
+
+    def _get_output_shapes(self) -> OrderedDict:
+        """
+        Network outputs are the value of the Q-function at each bin for the 
+        current layer.
+        """
+        return OrderedDict(bin_values=(self.bins,))
+    
+    def output_shape(self, input_shape : Iterable[int] | None = None) -> list[int]:
+        """
+        Computes output shape from inputs (which aren't needed for this module).
+
+        Args:
+            input_shape (iterable of int): shape of input. Does not include 
+                batch dimension.  Some modules may not need this argument, if 
+                their output does not depend on the size of the input, or if 
+                they assume fixed size input.
+        
+        Returns:
+            out_shape (list[int]): list of integers corresponding to output 
+                shape
+        """
+        return [self.bins]
+    
+    def forward(
+        self, 
+        obs_dict: OrderedDict, 
+        prev_action: torch.Tensor,
+        level: int,
+        goal_dict: OrderedDict | None = None
+    ) -> dict:
+        """
+        Forward through value network, and then optionally use tanh scaling.
+        """
+        inputs = dict(obs_dict)
+        inputs["prev_action"] = prev_action
+        inputs["level"] = torch.nn.functional.one_hot(
+            torch.tensor(level), num_classes=self.levels
+        ).repeat(prev_action.shape[0], 1)
+        return super(C2FLayerNetwork, self).forward(inputs, goal_dict)
+
+    def _to_string(self) -> str:
+        msg = f"levels={self.levels}"
+        msg += f"\nbins={self.bins}"
+        msg += f"\naction_dim={self.ac_dim}"
+        msg += f"\nvalue_bounds={self.value_bounds}"
+        return msg
+
+
+class C2FNetwork(ValueNetwork):
+    """
+    A coarse-to-fine Q-network. For a C2F Q-network with L layers and B bins 
+    per layer, the output of each layer is a vector of length B indicating the 
+    value of the Q-function at that bin. This network implements the entire 
+    hierarchy.
+    """
+
+    def __init__(
+        self,
+        obs_shapes: OrderedDict,
+        ac_dim: int,
+        mlp_layer_dims: list[int],
+        levels: int,
+        bins: int,
+        value_bounds: tuple[int, int] | None = None,
+        goal_shapes: OrderedDict | None = None,
+        encoder_kwargs: dict | None = None,
+    ):
+        """
+        Args:
+            obs_shapes (OrderedDict): a dictionary that maps observation keys 
+                to expected shapes for observations.
+
+            ac_dim (int): dimension of action space.
+
+            mlp_layer_dims ([int]): sequence of integers for the MLP hidden 
+                layers sizes. 
+            
+            levels (int): number of levels in the C2F hierarchy.
+
+            bins (int): number of bins in each level.
+
+            value_bounds (tuple): a 2-tuple corresponding to the lowest and 
+                highest possible return that the network should be possible of 
+                generating. The network will rescale outputs using a tanh layer 
+                to lie within these bounds. If None, no tanh re-scaling is done.
+
+            goal_shapes (OrderedDict): a dictionary that maps observation keys 
+                to expected shapes for goal observations.
+
+            encoder_kwargs (dict or None): If None, results in default 
+                encoder_kwargs being applied. Otherwise, should be nested 
+                dictionary containing relevant per-observation key information 
+                for encoder networks.  Should be of form:
+
+                obs_modality1: dict
+                    feature_dimension: int
+                    core_class: str
+                    core_kwargs: dict
+                        ...
+                        ...
+                    obs_randomizer_class: str
+                    obs_randomizer_kwargs: dict
+                        ...
+                        ...
+                obs_modality2: dict
+                    ...
+        """
+        self.network = C2FLayerNetwork(
+            obs_shapes=obs_shapes,
+            ac_dim=ac_dim,
+            mlp_layer_dims=mlp_layer_dims,
+            levels=levels,
+            bins=bins,
+            value_bounds=value_bounds,
+            goal_shapes=goal_shapes,
+            encoder_kwargs=encoder_kwargs,
+        )
