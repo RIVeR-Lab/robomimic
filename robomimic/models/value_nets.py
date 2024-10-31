@@ -398,23 +398,13 @@ class C2FLayerNetwork(ValueNetwork):
         Network outputs are the value of the Q-function at each bin for the 
         current layer.
         """
-        return OrderedDict(bin_values=(self.bins,))
+        return dict(bin_values=(self.ac_dim, self.bins))
     
     def output_shape(self, input_shape : Iterable[int] | None = None) -> list[int]:
         """
-        Computes output shape from inputs (which aren't needed for this module).
-
-        Args:
-            input_shape (iterable of int): shape of input. Does not include 
-                batch dimension.  Some modules may not need this argument, if 
-                their output does not depend on the size of the input, or if 
-                they assume fixed size input.
-        
-        Returns:
-            out_shape (list[int]): list of integers corresponding to output 
-                shape
+        Computes output shape from inputs (which aren't needed for C2F).
         """
-        return [self.bins]
+        return dict(bin_values=(self.ac_dim, self.bins))
     
     def forward(
         self, 
@@ -424,13 +414,15 @@ class C2FLayerNetwork(ValueNetwork):
         goal_dict: OrderedDict | None = None
     ) -> dict:
         """
-        Forward through value network, and then optionally use tanh scaling.
+        Forward through value network, and then uses tanh scaling if 
+        value_bounds is set. Returns a vector of size (bins,) indicating the 
+        estimated value of the Q-function at each bin.
         """
         inputs = dict(obs_dict)
         inputs["prev_action"] = prev_action
         inputs["level"] = torch.nn.functional.one_hot(
             torch.tensor(level), num_classes=self.levels
-        ).repeat(prev_action.shape[0], 1)
+        )
         return super(C2FLayerNetwork, self).forward(inputs, goal_dict)
 
     def _to_string(self) -> str:
@@ -500,6 +492,10 @@ class C2FNetwork(ValueNetwork):
                 obs_modality2: dict
                     ...
         """
+        self.levels = levels
+        self.bins = bins
+        self.ac_dim = ac_dim
+
         self.network = C2FLayerNetwork(
             obs_shapes=obs_shapes,
             ac_dim=ac_dim,
@@ -510,3 +506,38 @@ class C2FNetwork(ValueNetwork):
             goal_shapes=goal_shapes,
             encoder_kwargs=encoder_kwargs,
         )
+    
+    def _get_output_shapes(self) -> OrderedDict:
+        """
+        Network outputs are the value of the Q-function for the given state 
+        and action, as well as the values at each layer and the final action 
+        (which can be provided, in which case we return the provided action).
+        """
+        return dict(layer_values=(self.levels, self.ac_dim, self.bins), action=(self.ac_dim,))
+    
+    def output_shape(self, input_shape : Iterable[int] | None = None) -> list[int]:
+        """
+        Computes output shape from inputs (which aren't needed for C2F).
+        """
+        return dict(layer_values=(self.levels, self.ac_dim, self.bins), action=(self.ac_dim,))
+    
+    def forward(
+        self, 
+        obs_dict: OrderedDict, 
+        goal_dict: OrderedDict | None = None,
+        action: torch.Tensor | None = None
+    ) -> dict:
+        """
+        Forward through value network, and then uses tanh scaling if 
+        value_bounds is set (done through C2FLayerNetwork). Returns the values 
+        from the selection at each layer as well as the final action.
+        """
+        # TODO
+        pass
+
+    def _to_string(self) -> str:
+        msg = f"levels={self.levels}"
+        msg += f"\nbins={self.bins}"
+        msg += f"\naction_dim={self.ac_dim}"
+        msg += f"\nvalue_bounds={self.value_bounds}"
+        return msg
