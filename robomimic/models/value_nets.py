@@ -472,6 +472,7 @@ class C2FNetwork(C2FLayerNetwork):
         mlp_layer_dims: list[int],
         levels: int,
         bins: int,
+        input_bounds: tuple[int, int],
         value_bounds: tuple[int, int] | None = None,
         goal_shapes: OrderedDict | None = None,
         encoder_kwargs: dict | None = None,
@@ -489,6 +490,10 @@ class C2FNetwork(C2FLayerNetwork):
             levels (int): number of levels in the C2F hierarchy.
 
             bins (int): number of bins in each level.
+
+            input_bounds (tuple[int, int]): a 2-tuple corresponding to the 
+                lowest and highest possible action the agent can make (assumed 
+                to be the same across all action dimensions)
 
             value_bounds (tuple): a 2-tuple corresponding to the lowest and 
                 highest possible return that the network should be possible of 
@@ -519,6 +524,8 @@ class C2FNetwork(C2FLayerNetwork):
         self.levels = levels
         self.bins = bins
         self.ac_dim = ac_dim
+        self.input_min = input_bounds[0]
+        self.input_max = input_bounds[1]
 
         self.network = C2FLayerNetwork(
             obs_shapes=obs_shapes,
@@ -557,6 +564,23 @@ class C2FNetwork(C2FLayerNetwork):
         from the selection at each layer as well as the final action.
         """
         # TODO
+
+        if action is not None:
+            # TODO: encode the action
+            pass
+
+        # low and high initialized to bounds of input
+        low = torch.tensor([self.input_min] * self.ac_dim).float()
+        high = torch.tensor([self.input_max] * self.ac_dim).float()
+
+        # iterate through levels
+        for level in range(self.levels):
+            # get Q-value for current level
+            prev_action = (low + high) / 2.
+            bin_values = self.network.forward(obs_dict, prev_action, level, goal_dict)["bin_values"]
+            print(bin_values)
+            exit()
+
 
     def _to_string(self) -> str:
         msg = f"levels={self.levels}"

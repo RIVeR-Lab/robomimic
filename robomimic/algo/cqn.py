@@ -69,6 +69,7 @@ class CQN(PolicyAlgo, ValueAlgo):
             levels=self.algo_config.critic.levels,
             bins=self.algo_config.critic.bins,
             value_bounds=self.algo_config.critic.value_bounds,
+            input_bounds=(self.algo_config.critic.input_min, self.algo_config.critic.input_max),
             goal_shapes=self.goal_shapes,
             encoder_kwargs=ObsUtils.obs_encoder_kwargs_from_config(self.obs_config.encoder),
         )
