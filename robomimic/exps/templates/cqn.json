@@ -61,7 +61,7 @@
         "seed": 1
     },
     "algo": {
-        "discount": 1.0,
+        "discount": 0.99,
         "n_step": 1,
         "infinite_horizon": false,
         "optim_params": {
@@ -87,6 +87,7 @@
                 -1,
                 1
             ],
+            "max_gradient_norm": null,
             "input_min": -1,
             "input_max": 1,
             "levels": 3,
