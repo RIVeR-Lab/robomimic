@@ -319,12 +319,12 @@ class DistributionalActionValueNetwork(ActionValueNetwork):
         return "action_dim={}\nvalue_bounds={}\nnum_atoms={}".format(self.ac_dim, self.value_bounds, self.num_atoms)
 
 
-class C2FLayerNetwork(ValueNetwork):
+class C2FLayerNetwork(MIMO_MLP):
     """
-    A single layer of a coarse-to-fine Q-network. For a C2F Q-network with L 
-    layers and B bins per layer, the output of each layer is a vector of 
-    length B indicating the value of the Q-function at that bin. This network 
-    implements just one of these layers.
+    A single layer of a coarse-to-fine Q-network. For an agent with N actions 
+    and a C2F Q-network with L layers and B bins per layer, the output of each 
+    layer is a vector of size (N, B) indicating the value of the Q-function at 
+    the provided layer. This network implements a single layer of the hierarchy.
     """
 
     def __init__(
@@ -382,14 +382,35 @@ class C2FLayerNetwork(ValueNetwork):
         self.bins = bins
         self.ac_dim = ac_dim
 
-        new_obs_shapes = OrderedDict(obs_shapes)
-        new_obs_shapes["level"] = (levels,)
-        new_obs_shapes["prev_action"] = (ac_dim,)
+        self.value_bounds = value_bounds
+        if self.value_bounds is not None:
+            # convert [lb, ub] to a scale and offset for the tanh output, which is in [-1, 1]
+            self._value_scale = (float(self.value_bounds[1]) - float(self.value_bounds[0])) / 2.
+            self._value_offset = (float(self.value_bounds[1]) + float(self.value_bounds[0])) / 2.
+        
+        assert isinstance(obs_shapes, OrderedDict)
+        self.obs_shapes = obs_shapes
+
+        # set up different observation groups for @MIMO_MLP
+        observation_group_shapes = OrderedDict()
+        observation_group_shapes["obs"] = OrderedDict(self.obs_shapes)
+        observation_group_shapes["obs"]["prev_action"] = (ac_dim,)  # previous action
+        observation_group_shapes["obs"]["level"] = (levels,)  # one-hot encoding of level
+        
+        self._is_goal_conditioned = False
+        if goal_shapes is not None and len(goal_shapes) > 0:
+            assert isinstance(goal_shapes, OrderedDict)
+            self._is_goal_conditioned = True
+            self.goal_shapes = OrderedDict(goal_shapes)
+            observation_group_shapes["goal"] = OrderedDict(self.goal_shapes)
+        else:
+            self.goal_shapes = OrderedDict()
+        
+        output_shapes = self._get_output_shapes()
         super(C2FLayerNetwork, self).__init__(
-            obs_shapes=new_obs_shapes,
-            mlp_layer_dims=mlp_layer_dims,
-            value_bounds=value_bounds,
-            goal_shapes=goal_shapes,
+            input_obs_group_shapes=observation_group_shapes,
+            output_shapes=output_shapes,
+            layer_dims=mlp_layer_dims,
             encoder_kwargs=encoder_kwargs,
         )
 
@@ -415,15 +436,18 @@ class C2FLayerNetwork(ValueNetwork):
     ) -> dict:
         """
         Forward through value network, and then uses tanh scaling if 
-        value_bounds is set. Returns a vector of size (bins,) indicating the 
-        estimated value of the Q-function at each bin.
+        value_bounds is set. Returns a vector of size (ac_dim, bins,) 
+        indicating the estimated value of the Q-function at each bin.
         """
         inputs = dict(obs_dict)
         inputs["prev_action"] = prev_action
         inputs["level"] = torch.nn.functional.one_hot(
             torch.tensor(level), num_classes=self.levels
         )
-        return super(C2FLayerNetwork, self).forward(inputs, goal_dict)
+        layer_dict = super(C2FLayerNetwork, self).forward(inputs, goal_dict)
+        if self.value_bounds is not None:
+            layer_dict["bin_values"] = self._value_offset + self._value_scale * torch.tanh(layer_dict["bin_values"])
+        return layer_dict
 
     def _to_string(self) -> str:
         msg = f"levels={self.levels}"
@@ -433,7 +457,7 @@ class C2FLayerNetwork(ValueNetwork):
         return msg
 
 
-class C2FNetwork(ValueNetwork):
+class C2FNetwork(C2FLayerNetwork):
     """
     A coarse-to-fine Q-network. For a C2F Q-network with L layers and B bins 
     per layer, the output of each layer is a vector of length B indicating the 
@@ -533,7 +557,6 @@ class C2FNetwork(ValueNetwork):
         from the selection at each layer as well as the final action.
         """
         # TODO
-        pass
 
     def _to_string(self) -> str:
         msg = f"levels={self.levels}"

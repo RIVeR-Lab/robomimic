@@ -61,11 +61,13 @@ class CQN(PolicyAlgo, ValueAlgo):
         Create networks and places them into @self.nets.
         """
         self.nets = nn.ModuleDict()
-        critic_class = ValueNets.ActionValueNetwork
+        critic_class = ValueNets.C2FNetwork
         critic_args = dict(
             obs_shapes=self.obs_shapes,
             ac_dim=self.ac_dim,
             mlp_layer_dims=self.algo_config.critic.layer_dims,
+            levels=self.algo_config.critic.levels,
+            bins=self.algo_config.critic.bins,
             value_bounds=self.algo_config.critic.value_bounds,
             goal_shapes=self.goal_shapes,
             encoder_kwargs=ObsUtils.obs_encoder_kwargs_from_config(self.obs_config.encoder),
