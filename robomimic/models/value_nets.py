@@ -319,145 +319,7 @@ class DistributionalActionValueNetwork(ActionValueNetwork):
         return "action_dim={}\nvalue_bounds={}\nnum_atoms={}".format(self.ac_dim, self.value_bounds, self.num_atoms)
 
 
-class C2FLayerNetwork(MIMO_MLP):
-    """
-    A single layer of a coarse-to-fine Q-network. For an agent with N actions 
-    and a C2F Q-network with L layers and B bins per layer, the output of each 
-    layer is a vector of size (N, B) indicating the value of the Q-function at 
-    the provided layer. This network implements a single layer of the hierarchy.
-    """
-
-    def __init__(
-        self,
-        obs_shapes: OrderedDict,
-        ac_dim: int,
-        mlp_layer_dims: list[int],
-        levels: int,
-        bins: int,
-        value_bounds: tuple[int, int] | None = None,
-        goal_shapes: OrderedDict | None = None,
-        encoder_kwargs: dict | None = None,
-    ):
-        """
-        Args:
-            obs_shapes (OrderedDict): a dictionary that maps observation keys 
-                to expected shapes for observations.
-
-            ac_dim (int): dimension of action space.
-
-            mlp_layer_dims ([int]): sequence of integers for the MLP hidden 
-                layers sizes. 
-            
-            levels (int): number of levels in the C2F hierarchy.
-
-            bins (int): number of bins in each level.
-
-            value_bounds (tuple): a 2-tuple corresponding to the lowest and 
-                highest possible return that the network should be possible of 
-                generating. The network will rescale outputs using a tanh layer 
-                to lie within these bounds. If None, no tanh re-scaling is done.
-
-            goal_shapes (OrderedDict): a dictionary that maps observation keys 
-                to expected shapes for goal observations.
-
-            encoder_kwargs (dict or None): If None, results in default 
-                encoder_kwargs being applied. Otherwise, should be nested 
-                dictionary containing relevant per-observation key information 
-                for encoder networks.  Should be of form:
-
-                obs_modality1: dict
-                    feature_dimension: int
-                    core_class: str
-                    core_kwargs: dict
-                        ...
-                        ...
-                    obs_randomizer_class: str
-                    obs_randomizer_kwargs: dict
-                        ...
-                        ...
-                obs_modality2: dict
-                    ...
-        """
-        self.levels = levels
-        self.bins = bins
-        self.ac_dim = ac_dim
-
-        self.value_bounds = value_bounds
-        if self.value_bounds is not None:
-            # convert [lb, ub] to a scale and offset for the tanh output, which is in [-1, 1]
-            self._value_scale = (float(self.value_bounds[1]) - float(self.value_bounds[0])) / 2.
-            self._value_offset = (float(self.value_bounds[1]) + float(self.value_bounds[0])) / 2.
-        
-        assert isinstance(obs_shapes, OrderedDict)
-        self.obs_shapes = obs_shapes
-
-        # set up different observation groups for @MIMO_MLP
-        observation_group_shapes = OrderedDict()
-        observation_group_shapes["obs"] = OrderedDict(self.obs_shapes)
-        observation_group_shapes["obs"]["prev_action"] = (ac_dim,)  # previous action
-        observation_group_shapes["obs"]["level"] = (levels,)  # one-hot encoding of level
-        
-        self._is_goal_conditioned = False
-        if goal_shapes is not None and len(goal_shapes) > 0:
-            assert isinstance(goal_shapes, OrderedDict)
-            self._is_goal_conditioned = True
-            self.goal_shapes = OrderedDict(goal_shapes)
-            observation_group_shapes["goal"] = OrderedDict(self.goal_shapes)
-        else:
-            self.goal_shapes = OrderedDict()
-        
-        output_shapes = self._get_output_shapes()
-        super(C2FLayerNetwork, self).__init__(
-            input_obs_group_shapes=observation_group_shapes,
-            output_shapes=output_shapes,
-            layer_dims=mlp_layer_dims,
-            encoder_kwargs=encoder_kwargs,
-        )
-
-    def _get_output_shapes(self) -> OrderedDict:
-        """
-        Network outputs are the value of the Q-function at each bin for the 
-        current layer.
-        """
-        return dict(bin_values=(self.ac_dim, self.bins))
-    
-    def output_shape(self, input_shape : Iterable[int] | None = None) -> list[int]:
-        """
-        Computes output shape from inputs (which aren't needed for C2F).
-        """
-        return dict(bin_values=(self.ac_dim, self.bins))
-    
-    def forward(
-        self, 
-        obs_dict: OrderedDict, 
-        prev_action: torch.Tensor,
-        level: int,
-        goal_dict: OrderedDict | None = None
-    ) -> dict:
-        """
-        Forward through value network, and then uses tanh scaling if 
-        value_bounds is set. Returns a vector of size (ac_dim, bins,) 
-        indicating the estimated value of the Q-function at each bin.
-        """
-        inputs = dict(obs_dict)
-        inputs["prev_action"] = prev_action
-        inputs["level"] = torch.nn.functional.one_hot(
-            torch.tensor(level), num_classes=self.levels
-        )
-        layer_dict = super(C2FLayerNetwork, self).forward(inputs, goal_dict)
-        if self.value_bounds is not None:
-            layer_dict["bin_values"] = self._value_offset + self._value_scale * torch.tanh(layer_dict["bin_values"])
-        return layer_dict
-
-    def _to_string(self) -> str:
-        msg = f"levels={self.levels}"
-        msg += f"\nbins={self.bins}"
-        msg += f"\naction_dim={self.ac_dim}"
-        msg += f"\nvalue_bounds={self.value_bounds}"
-        return msg
-
-
-class C2FNetwork(C2FLayerNetwork):
+class C2FNetwork(MIMO_MLP):
     """
     A coarse-to-fine Q-network. For a C2F Q-network with L layers and B bins 
     per layer, the output of each layer is a vector of length B indicating the 
@@ -477,79 +339,48 @@ class C2FNetwork(C2FLayerNetwork):
         goal_shapes: OrderedDict | None = None,
         encoder_kwargs: dict | None = None,
     ):
-        """
-        Args:
-            obs_shapes (OrderedDict): a dictionary that maps observation keys 
-                to expected shapes for observations.
-
-            ac_dim (int): dimension of action space.
-
-            mlp_layer_dims ([int]): sequence of integers for the MLP hidden 
-                layers sizes. 
-            
-            levels (int): number of levels in the C2F hierarchy.
-
-            bins (int): number of bins in each level.
-
-            input_bounds (tuple[int, int]): a 2-tuple corresponding to the 
-                lowest and highest possible action the agent can make (assumed 
-                to be the same across all action dimensions)
-
-            value_bounds (tuple): a 2-tuple corresponding to the lowest and 
-                highest possible return that the network should be possible of 
-                generating. The network will rescale outputs using a tanh layer 
-                to lie within these bounds. If None, no tanh re-scaling is done.
-
-            goal_shapes (OrderedDict): a dictionary that maps observation keys 
-                to expected shapes for goal observations.
-
-            encoder_kwargs (dict or None): If None, results in default 
-                encoder_kwargs being applied. Otherwise, should be nested 
-                dictionary containing relevant per-observation key information 
-                for encoder networks.  Should be of form:
-
-                obs_modality1: dict
-                    feature_dimension: int
-                    core_class: str
-                    core_kwargs: dict
-                        ...
-                        ...
-                    obs_randomizer_class: str
-                    obs_randomizer_kwargs: dict
-                        ...
-                        ...
-                obs_modality2: dict
-                    ...
-        """
         self.levels = levels
         self.bins = bins
         self.ac_dim = ac_dim
         self.input_min = input_bounds[0]
         self.input_max = input_bounds[1]
 
-        self.network = C2FLayerNetwork(
-            obs_shapes=obs_shapes,
-            ac_dim=ac_dim,
-            mlp_layer_dims=mlp_layer_dims,
-            levels=levels,
-            bins=bins,
-            value_bounds=value_bounds,
-            goal_shapes=goal_shapes,
+        self.value_bounds = value_bounds
+        if self.value_bounds is not None:
+            # convert [lb, ub] to a scale and offset for the tanh output, which is in [-1, 1]
+            self._value_scale = (float(self.value_bounds[1]) - float(self.value_bounds[0])) / 2.
+            self._value_offset = (float(self.value_bounds[1]) + float(self.value_bounds[0])) / 2.
+
+        assert isinstance(obs_shapes, OrderedDict)
+        self.obs_shapes = obs_shapes
+
+        # set up different observation groups for @MIMO_MLP
+        observation_group_shapes = OrderedDict()
+        observation_group_shapes["obs"] = OrderedDict(self.obs_shapes)
+        observation_group_shapes["obs"]["prev_action"] = (ac_dim,)  # previous action
+        observation_group_shapes["obs"]["level"] = (levels,)  # one-hot encoding of level
+
+        self._is_goal_conditioned = False
+        if goal_shapes is not None and len(goal_shapes) > 0:
+            assert isinstance(goal_shapes, OrderedDict)
+            self._is_goal_conditioned = True
+            self.goal_shapes = OrderedDict(goal_shapes)
+            observation_group_shapes["goal"] = OrderedDict(self.goal_shapes)
+        else:
+            self.goal_shapes = OrderedDict()
+        
+        output_shapes = self._get_layer_output_shapes()
+        super(C2FNetwork, self).__init__(
+            input_obs_group_shapes=observation_group_shapes,
+            output_shapes=output_shapes,
+            layer_dims=mlp_layer_dims,
             encoder_kwargs=encoder_kwargs,
         )
-    
-    def _get_output_shapes(self) -> OrderedDict:
-        """
-        Network outputs are the value of the Q-function for the given state 
-        and action, as well as the values at each layer and the final action 
-        (which can be provided, in which case we return the provided action).
-        """
-        return dict(layer_values=(self.levels, self.ac_dim, self.bins), action=(self.ac_dim,))
-    
+
+    def _get_layer_output_shapes(self) -> OrderedDict:
+        return OrderedDict(bin_values=(self.levels, self.bins))
+
     def output_shape(self, input_shape : Iterable[int] | None = None) -> list[int]:
-        """
-        Computes output shape from inputs (which aren't needed for C2F).
-        """
         return dict(layer_values=(self.levels, self.ac_dim, self.bins), action=(self.ac_dim,))
     
     def forward(
@@ -558,13 +389,7 @@ class C2FNetwork(C2FLayerNetwork):
         goal_dict: OrderedDict | None = None,
         action: torch.Tensor | None = None
     ) -> dict:
-        """
-        Forward through value network, and then uses tanh scaling if 
-        value_bounds is set (done through C2FLayerNetwork). Returns the values 
-        from the selection at each layer as well as the final action.
-        """
         # TODO
-
         if action is not None:
             # TODO: encode the action
             pass
@@ -577,10 +402,75 @@ class C2FNetwork(C2FLayerNetwork):
         for level in range(self.levels):
             # get Q-value for current level
             prev_action = (low + high) / 2.
-            bin_values = self.network.forward(obs_dict, prev_action, level, goal_dict)["bin_values"]
-            print(bin_values)
+            obs_dict["prev_action"] = prev_action
+            obs_dict["level"] = F.one_hot(torch.tensor(level), self.levels).float()
+            bin_values = super(C2FNetwork, self).forward(obs_dict=obs_dict, goal_dict=goal_dict)
             exit()
+        
+    @staticmethod
+    def encode_action(
+        continuous_action: torch.Tensor,
+        action_min: torch.Tensor,
+        action_max: torch.Tensor,
+        levels: int,
+        bins: int
+    ) -> torch.Tensor:
+        """
+        Encode continuous action into discrete action (bin selections).
 
+        Args:
+            continuous_action (torch.Tensor): shape (batch_size, ac_dim)
+            action_min (torch.Tensor): shape (ac_dim)
+            action_max (torch.Tensor): shape (ac_dim)
+            levels (int): number of levels in the C2F hierarchy
+            bins (int): number of bins in each level
+        
+        Returns:
+            discrete_action (torch.Tensor): shape (batch_size, ac_dim, levels)
+        """
+        low = action_min.clone()
+        high = action_max.clone()
+
+        discrete_action = torch.zeros(
+            continuous_action.shape[0], continuous_action.shape[1], levels
+        ).to(continuous_action.device)
+        for l in range(levels):
+            # put continuous values into bins
+            slice_range = (high - low) / bins
+            idx = torch.floor((continuous_action - low) / slice_range).to(torch.int)
+            idx = torch.clamp(idx, 0, bins - 1)
+            discrete_action[:, :, l] = idx
+
+            # compute new low and high for each bin (zoom in)
+            low = low + idx * slice_range
+            high = low + slice_range
+        return discrete_action
+    
+    @staticmethod
+    def decode_action(
+        discrete_action: torch.Tensor,
+        action_min: torch.Tensor,
+        action_max: torch.Tensor,
+        levels: int,
+        bins: int
+    ):
+        """
+        Decode discrete action (bin selections) into continuous action.
+
+        Args:
+            discrete_action (torch.Tensor): shape (batch_size, ac_dim, levels)
+            action_min (torch.Tensor): shape (ac_dim)
+            action_max (torch.Tensor): shape (ac_dim)
+            levels (int): number of levels in the C2F hierarchy
+            bins (int): number of bins in each level
+        """
+        low = action_min.clone()
+        high = action_max.clone()
+        for l in range(levels):
+            slice_range = (high - low) / bins
+            low = low + discrete_action[:, :, l] * slice_range
+            high = low + slice_range
+        return (low + high) / 2.
 
     def _to_string(self) -> str:
         msg = f"levels={self.levels}"

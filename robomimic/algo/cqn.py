@@ -75,6 +75,7 @@ class CQN(PolicyAlgo, ValueAlgo):
         )
         self.nets["critic"] = critic_class(**critic_args)
         self.nets["critic_target"] = critic_class(**critic_args)
+        self.nets = self.nets.to(self.device).float()
 
         # sync target networks at start of training
         with torch.no_grad():
@@ -108,7 +109,7 @@ class CQN(PolicyAlgo, ValueAlgo):
         """
         assert not self.nets.training
         actions = self.get_action(obs_dict=obs_dict, goal_dict=goal_dict)
-        return self.get_state_action_value(obs_dict=obs_dict, actions=actions, goal_dict=goal_dict)
+        # TODO
     
     def get_state_action_value(
         self, obs_dict: dict, actions: torch.Tensor, goal_dict: dict | None = None
@@ -125,7 +126,7 @@ class CQN(PolicyAlgo, ValueAlgo):
             value (torch.Tensor): value tensor
         """
         assert not self.nets.training
-        return self.nets["critic"](obs_dict=obs_dict, goal_dict=goal_dict, actions=actions)
+        # TODO
     
     def process_batch_for_training(self, batch):
         """
@@ -174,18 +175,17 @@ class CQN(PolicyAlgo, ValueAlgo):
             if done_inds.shape[0] > 0:
                 input_batch["rewards"][done_inds] = input_batch["rewards"][done_inds] * (1. / (1. - self.discount))
         
-        # print()
+        # print('\n\n\n\n')
         # print(f'{input_batch["obs"]["object"].shape=}')
-        # print(f'{input_batch["next_obs"]["object"].shape=}')
+        # print(f'{input_batch["obs"]["agentview_image"].shape=}')
+        # print(f'{input_batch["obs"]["robot0_eye_in_hand_image"].shape=}')
         # print(f'{input_batch["obs"]["robot0_eef_pos"].shape=}')
-        # print(f'{input_batch["next_obs"]["robot0_eef_pos"].shape=}')
         # print(f'{input_batch["obs"]["robot0_eef_quat"].shape=}')
-        # print(f'{input_batch["next_obs"]["robot0_eef_quat"].shape=}')
         # print(f'{input_batch["obs"]["robot0_gripper_qpos"].shape=}')
-        # print(f'{input_batch["next_obs"]["robot0_gripper_qpos"].shape=}')
         # print(f'{input_batch["actions"].shape=}')
         # print(f'{input_batch["rewards"].shape=}')
         # print(f'{input_batch["dones"].shape=}')
+        # print('\n\n\n\n')
 
         # we move to device first before float conversion because image observation modalities will be uint8 -
         # this minimizes the amount of data transferred to GPU
@@ -212,14 +212,17 @@ class CQN(PolicyAlgo, ValueAlgo):
         with TorchUtils.maybe_no_grad(no_grad=validate):
             info = PolicyAlgo.train_on_batch(self, batch, epoch, validate)
             
-            # update critic: TODO
+            # update critic:
+            critic_info = self._train_critic_on_batch(batch, epoch, validate)
+            info.update(critic_info)
 
             # update critic target
-            TorchUtils.soft_update(
-                source=self.nets["critic"],
-                target=self.nets["critic_target"],
-                tau=self.algo_config.target_tau
-            )
+            with torch.no_grad():
+                TorchUtils.soft_update(
+                    source=self.nets["critic"],
+                    target=self.nets["critic_target"],
+                    tau=self.algo_config.target_tau
+                )
             
         return info
     
@@ -284,6 +287,30 @@ class CQN(PolicyAlgo, ValueAlgo):
 
         return info
     
+    def _get_target_values(
+        self,
+        next_states: dict,
+        goal_states: dict | None,
+        rewards: torch.Tensor,
+        dones: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Compute target Q-values for the critic.
+
+        Args:
+            next_states (dict): next states
+            goal_states (dict): goal states
+            rewards (torch.Tensor): rewards
+            dones (torch.Tensor): dones
+
+        Returns:
+            q_targets (torch.Tensor): target Q-values
+        """
+        # TODO
+        with torch.no_grad():
+            target_dict = self.nets["critic_target"](next_states, goal_states)
+        pass
+    
     def _compute_critic_loss(
         self,
         critic: nn.Module,
@@ -311,7 +338,7 @@ class CQN(PolicyAlgo, ValueAlgo):
         """
         
         q_values = 0. # TODO
-        critic_loss = nn.MSELoss()(q_values, q_targets)
+        critic_loss = nn.MSELoss()(q_values, q_targets) # TODO: maybe use Huber?
         return critic_loss
 
     def log_info(self, info: dict) -> dict:

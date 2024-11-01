@@ -64,8 +64,8 @@ class CQNConfig(BaseConfig):
             "object",  # comment for image, uncomment for low dim
         ]
         self.observation.modalities.obs.rgb = [
-            # "agentview_image",
-            # "robot0_eye_in_hand_image"
+            # "agentview_image",          # comment for low dim, uncomment for image
+            # "robot0_eye_in_hand_image"  # comment for low dim, uncomment for image
         ]
     
     def meta_config(self):

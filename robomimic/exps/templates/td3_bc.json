@@ -119,7 +119,10 @@
         "modalities": {
             "obs": {
                 "low_dim": [
-                    "flat"
+                    "robot0_eef_pos",
+                    "robot0_eef_quat",
+                    "robot0_gripper_qpos",
+                    "object"
                 ],
                 "rgb": [],
                 "depth": [],

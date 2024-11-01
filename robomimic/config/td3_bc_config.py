@@ -108,4 +108,9 @@ class TD3_BCConfig(BaseConfig):
         Update from superclass to use flat observations from gym envs.
         """
         super(TD3_BCConfig, self).observation_config()
-        self.observation.modalities.obs.low_dim = ["flat"]
+        self.observation.modalities.obs.low_dim = [
+            "robot0_eef_pos",
+            "robot0_eef_quat",
+            "robot0_gripper_qpos",
+            "object",  # comment for image, uncomment for low dim
+        ]
