@@ -338,7 +338,9 @@ class C2FNetwork(MIMO_MLP):
         value_bounds: tuple[int, int] | None = None,
         goal_shapes: OrderedDict | None = None,
         encoder_kwargs: dict | None = None,
+        device: torch.device = torch.device("cpu"),
     ):
+        self.device = device
         self.levels = levels
         self.bins = bins
         self.ac_dim = ac_dim
@@ -378,34 +380,68 @@ class C2FNetwork(MIMO_MLP):
         )
 
     def _get_layer_output_shapes(self) -> OrderedDict:
-        return OrderedDict(bin_values=(self.levels, self.bins))
+        return OrderedDict(bin_values=(self.ac_dim, self.bins))
 
     def output_shape(self, input_shape : Iterable[int] | None = None) -> list[int]:
-        return dict(layer_values=(self.levels, self.ac_dim, self.bins), action=(self.ac_dim,))
+        return dict(
+            q_values=(self.levels, self.ac_dim), 
+            action=(self.ac_dim,),
+            value=(1,)
+        )
     
     def forward(
         self, 
-        obs_dict: OrderedDict, 
-        goal_dict: OrderedDict | None = None,
+        obs_dict: dict, 
+        goal_dict: dict | None = None,
         action: torch.Tensor | None = None
     ) -> dict:
         # TODO
+
+        batch_size = obs_dict[list(obs_dict.items())[0][0]].shape[0]
         if action is not None:
-            # TODO: encode the action
-            pass
+            encoded_action = C2FNetwork.encode_action(
+                action, self.input_min, self.input_max, self.levels, self.bins
+            )
+        else:
+            encoded_action = torch.zeros(
+                batch_size, self.ac_dim, self.levels
+            ).to(self.device)
 
         # low and high initialized to bounds of input
-        low = torch.tensor([self.input_min] * self.ac_dim).float()
-        high = torch.tensor([self.input_max] * self.ac_dim).float()
+        low = torch.tensor(
+            [self.input_min] * self.ac_dim
+        ).to(self.device).float().repeat(batch_size, 1)
+        high = torch.tensor(
+            [self.input_max] * self.ac_dim
+        ).to(self.device).float().repeat(batch_size, 1)
+        
+        # initialize Q-values
+        q_values = torch.zeros(batch_size, self.levels, self.ac_dim).to(self.device)
 
         # iterate through levels
         for level in range(self.levels):
             # get Q-value for current level
-            prev_action = (low + high) / 2.
-            obs_dict["prev_action"] = prev_action
-            obs_dict["level"] = F.one_hot(torch.tensor(level), self.levels).float()
-            bin_values = super(C2FNetwork, self).forward(obs_dict=obs_dict, goal_dict=goal_dict)
-            exit()
+            obs_dict["prev_action"] = (
+                (low + high) / 2.
+            ).to(self.device)
+            obs_dict["level"] = F.one_hot(
+                torch.tensor(level), self.levels
+            ).to(self.device).float().repeat(batch_size, 1)
+            bin_values = super(C2FNetwork, self).forward(obs=obs_dict, goal=goal_dict)["bin_values"]
+            bin_selection = bin_values.argmax(dim=-1)
+            q_values[:, level] = bin_selection
+
+            # zoom in on selected bin
+            low, high = C2FNetwork.zoom_in(low, high, bin_selection, self.bins)
+        
+        # decode action
+        if action is None:
+            action = (low + high) / 2.
+            print(f'\n\n{action[0]=}\n\n')
+        
+        # output:
+        #   - q_values: shape (batch_size, levels, ac_dim, bins)
+        #   - action: shape (batch_size, ac_dim)
         
     @staticmethod
     def encode_action(
@@ -478,3 +514,21 @@ class C2FNetwork(MIMO_MLP):
         msg += f"\naction_dim={self.ac_dim}"
         msg += f"\nvalue_bounds={self.value_bounds}"
         return msg
+
+    @staticmethod
+    def zoom_in(
+        low: torch.Tensor, high: torch.Tensor, bin_selection: torch.Tensor, bins: int
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Zoom in on the selected bin.
+
+        Args:
+            low (torch.Tensor): shape (batch_size, ac_dim)
+            high (torch.Tensor): shape (batch_size, ac_dim)
+            bin_selection (torch.Tensor): shape (batch_size, ac_dim)
+            bins (int): number of bins in each level
+        """
+        slice_range = (high - low) / bins
+        low = low + bin_selection * slice_range
+        high = low + slice_range
+        return low, high

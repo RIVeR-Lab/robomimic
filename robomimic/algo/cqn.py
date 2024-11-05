@@ -72,6 +72,7 @@ class CQN(PolicyAlgo, ValueAlgo):
             input_bounds=(self.algo_config.critic.input_min, self.algo_config.critic.input_max),
             goal_shapes=self.goal_shapes,
             encoder_kwargs=ObsUtils.obs_encoder_kwargs_from_config(self.obs_config.encoder),
+            device=self.device,
         )
         self.nets["critic"] = critic_class(**critic_args)
         self.nets["critic_target"] = critic_class(**critic_args)
@@ -309,6 +310,7 @@ class CQN(PolicyAlgo, ValueAlgo):
         # TODO
         with torch.no_grad():
             target_dict = self.nets["critic_target"](next_states, goal_states)
+            exit()
         pass
     
     def _compute_critic_loss(
