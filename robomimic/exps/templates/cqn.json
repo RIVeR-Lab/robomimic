@@ -75,7 +75,8 @@
                 }
             },
             "bc_loss_weight": 1.0,
-            "rl_loss_weight": 0.1
+            "rl_loss_weight": 0.1,
+            "bc_margin": 0.01
         },
         "target_tau": 0.01,
         "critic": {

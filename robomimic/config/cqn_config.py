@@ -35,6 +35,7 @@ class CQNConfig(BaseConfig):
         self.algo.optim_params.critic.regularization.L2 = 0.0
         self.algo.optim_params.bc_loss_weight = 1.0
         self.algo.optim_params.rl_loss_weight = 0.1
+        self.algo.optim_params.bc_margin = 0.01
         # target network parameters
         self.algo.target_tau = 0.01
 

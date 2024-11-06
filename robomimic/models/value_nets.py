@@ -9,11 +9,8 @@ from collections import OrderedDict
 from collections.abc import Iterable
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import torch.distributions as D
 
-import robomimic.utils.tensor_utils as TensorUtils
 from robomimic.models.obs_nets import MIMO_MLP
 from robomimic.models.distributions import DiscreteValueDistribution
 
@@ -384,7 +381,7 @@ class C2FNetwork(MIMO_MLP):
 
     def output_shape(self, input_shape : Iterable[int] | None = None) -> list[int]:
         return dict(
-            q_values=(self.levels, self.ac_dim), 
+            q_values=(self.ac_dim, self.levels), 
             action=(self.ac_dim,),
             value=(1,)
         )
@@ -415,30 +412,29 @@ class C2FNetwork(MIMO_MLP):
             )
         else:
             encoded_action = torch.zeros(
-                batch_size, self.levels, self.ac_dim
+                batch_size, self.ac_dim, self.levels
             ).int().to(self.device)
-
         
         # initialize Q-values
-        q_values = torch.zeros(batch_size, self.levels, self.ac_dim).to(self.device)
+        q_values = torch.zeros(batch_size, self.ac_dim, self.levels).to(self.device)
 
         # iterate through levels
         for level in range(self.levels):
             # get Q-value for current level
-            obs_dict["prev_action"] = ((low + high) / 2.).to(self.device)
-            obs_dict["level"] = F.one_hot(
-                torch.tensor(level), self.levels
-            ).to(self.device).float().repeat(batch_size, 1)
-            bin_values = self.forward_layer(obs_dict, goal_dict)["bin_values"]
+            prev_action = ((low + high) / 2.).to(self.device)
+            bin_values = self.forward_level(
+                obs_dict, goal_dict, level, prev_action
+            )["bin_values"]
 
             # select bin (if we have action, use that, otherwise use argmax)
             if action is not None:
-                bin_selection = encoded_action[:, level].int()
+                bin_selection = encoded_action[:, :, level].to(torch.int64)
             else:
                 bin_selection = bin_values.argmax(dim=-1)
+                encoded_action[:, :, level] = bin_selection
 
             # update Q-values based on selected bin
-            q_values[:, level] = torch.gather(bin_values, 2, bin_selection.unsqueeze(-1)).squeeze(-1)
+            q_values[:, :, level] = torch.gather(bin_values, 2, bin_selection.unsqueeze(-1)).squeeze(-1)
 
             # zoom in on selected bin
             low, high = C2FNetwork.zoom_in(low, high, bin_selection, self.bins)
@@ -452,10 +448,23 @@ class C2FNetwork(MIMO_MLP):
         # output:
         #   - q_values: shape (batch_size, levels, ac_dim, bins)
         #   - action: shape (batch_size, ac_dim)
-        output = dict(action=action, q_values=q_values)
-        return output
+        #   - encoded_action: shape (batch_size, ac_dim, levels)
+        return dict(
+            action=action, q_values=q_values, encoded_action=encoded_action
+        )
     
-    def forward_layer(self, obs_dict: dict, goal_dict: dict | None = None) -> dict:
+    def forward_level(
+        self, 
+        obs_dict: dict, 
+        goal_dict: dict | None,
+        level: int,
+        prev_action: torch.Tensor,
+    ) -> dict:
+        batch_size = prev_action.shape[0]
+        obs_dict["prev_action"] = prev_action
+        obs_dict["level"] = F.one_hot(
+            torch.tensor(level), self.levels
+        ).to(self.device).float().repeat(batch_size, 1)
         return super(C2FNetwork, self).forward(obs=obs_dict, goal=goal_dict)
         
     @staticmethod
@@ -514,6 +523,9 @@ class C2FNetwork(MIMO_MLP):
             action_max (torch.Tensor): shape (ac_dim)
             levels (int): number of levels in the C2F hierarchy
             bins (int): number of bins in each level
+        
+        Returns:
+            continuous_action (torch.Tensor): shape (batch_size, ac_dim)
         """
         low = action_min.clone()
         high = action_max.clone()

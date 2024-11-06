@@ -258,26 +258,19 @@ class CQN(PolicyAlgo, ValueAlgo):
         # 1 if not done, 0 otherwise
         info["dones"] = dones
 
-        # Bellman backup for Q-targets
-        q_targets = self._get_target_values(
-            next_states=ns_batch, 
-            goal_states=goal_s_batch, 
-            rewards=r_batch, 
-            dones=dones,
-        )
-        info["critic/q_targets"] = q_targets
-        print("\n\n\n\nNext up, compute critic loss!\n\n\n\n")
-        exit()
-
-        # Train critics using this set of targets for regression
+        # compute critic loss (RL + BC loss)
         critic_loss = self._compute_critic_loss(
-            critic=self.nets["critic"],
             states=s_batch,
             actions=a_batch,
             goal_states=goal_s_batch,
-            q_targets=q_targets,
+            rewards=r_batch,
+            dones=dones,
+            next_states=ns_batch,
         )
         info["critic/critic_loss"] = critic_loss
+
+        print(f'\n\n{critic_loss=}\n\n')
+        exit()
 
         if not validate:
             critic_grad_norms = TorchUtils.backprop_for_loss(
@@ -290,6 +283,40 @@ class CQN(PolicyAlgo, ValueAlgo):
 
         return info
     
+    def _compute_critic_loss(
+        self,
+        states: dict,
+        actions: torch.Tensor,
+        goal_states: dict | None,
+        rewards: torch.Tensor,
+        dones: torch.Tensor,
+        next_states: dict
+    ) -> torch.Tensor:
+        print('\n\n')
+        q_targets = self._get_target_values(next_states, goal_states, rewards, dones)
+        q_values = self.nets["critic"](states, goal_states)['q_values']
+        rl_loss = nn.MSELoss()(q_values, q_targets)
+
+        critic_dict = self.nets["critic"](states, goal_states, actions)
+        critic_action = critic_dict['action']
+        q_critic = critic_dict['q_values']
+        print(f'{q_critic[0]=}')
+        print(f'{q_targets[0]=}')
+        print(f'{critic_action[0]=}')
+        print(f'{actions[0]=}')
+
+        print('\n\n')
+        exit()
+    
+    def _compute_rl_loss(
+        self,
+        states: dict,
+        goal_states: dict | None,
+        q_targets: torch.Tensor,
+    ):
+        q_values = self.nets['critic'](states, goal_states)['q_values']
+        return nn.MSELoss()(q_values, q_targets)
+
     def _get_target_values(
         self,
         next_states: dict,
@@ -297,24 +324,11 @@ class CQN(PolicyAlgo, ValueAlgo):
         rewards: torch.Tensor,
         dones: torch.Tensor
     ) -> torch.Tensor:
-        # TODO
         with torch.no_grad():
             q_targets = self.nets["critic_target"](next_states, goal_states)['q_values']
             rewards = rewards[:, None].expand(-1, *q_targets.shape[1:])
             dones = dones[:, None].expand(-1, *q_targets.shape[1:])
             return rewards + self.discount * (1. - dones) * q_targets
-    
-    def _compute_critic_loss(
-        self,
-        critic: ValueNets.C2FNetwork,
-        states: dict,
-        actions: torch.Tensor,
-        goal_states: dict | None,
-        q_targets: torch.Tensor
-    ) -> torch.Tensor:
-        q_values = 0. # TODO
-        critic_loss = nn.MSELoss()(q_values, q_targets) # TODO: maybe use Huber?
-        return critic_loss
 
     def log_info(self, info: dict) -> dict:
         # TODO
