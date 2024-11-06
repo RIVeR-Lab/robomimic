@@ -252,20 +252,22 @@ class CQN(PolicyAlgo, ValueAlgo):
         a_batch = batch["actions"]
         r_batch = batch["rewards"]
         ns_batch = batch["next_obs"]
+        dones = batch["dones"]
         goal_s_batch = batch["goal_obs"]
 
         # 1 if not done, 0 otherwise
-        done_mask_batch = 1. - batch["dones"]
-        info["done_masks"] = done_mask_batch
+        info["dones"] = dones
 
         # Bellman backup for Q-targets
         q_targets = self._get_target_values(
             next_states=ns_batch, 
             goal_states=goal_s_batch, 
             rewards=r_batch, 
-            dones=done_mask_batch,
+            dones=dones,
         )
         info["critic/q_targets"] = q_targets
+        print("\n\n\n\nNext up, compute critic loss!\n\n\n\n")
+        exit()
 
         # Train critics using this set of targets for regression
         critic_loss = self._compute_critic_loss(
@@ -295,65 +297,26 @@ class CQN(PolicyAlgo, ValueAlgo):
         rewards: torch.Tensor,
         dones: torch.Tensor
     ) -> torch.Tensor:
-        """
-        Compute target Q-values for the critic.
-
-        Args:
-            next_states (dict): next states
-            goal_states (dict): goal states
-            rewards (torch.Tensor): rewards
-            dones (torch.Tensor): dones
-
-        Returns:
-            q_targets (torch.Tensor): target Q-values
-        """
         # TODO
         with torch.no_grad():
-            target_dict = self.nets["critic_target"](next_states, goal_states)
-            exit()
-        pass
+            q_targets = self.nets["critic_target"](next_states, goal_states)['q_values']
+            rewards = rewards[:, None].expand(-1, *q_targets.shape[1:])
+            dones = dones[:, None].expand(-1, *q_targets.shape[1:])
+            return rewards + self.discount * (1. - dones) * q_targets
     
     def _compute_critic_loss(
         self,
-        critic: nn.Module,
+        critic: ValueNets.C2FNetwork,
         states: dict,
         actions: torch.Tensor,
         goal_states: dict | None,
         q_targets: torch.Tensor
     ) -> torch.Tensor:
-        """
-        Compute critic loss.
-
-        Args:
-            critic (nn.Module): critic network
-
-            states (dict): current states
-
-            actions (torch.Tensor): actions
-
-            goal_states (dict): goal states
-
-            q_targets (torch.Tensor): target Q-values
-
-        Returns:
-            critic_loss (torch.Tensor): critic loss
-        """
-        
         q_values = 0. # TODO
         critic_loss = nn.MSELoss()(q_values, q_targets) # TODO: maybe use Huber?
         return critic_loss
 
     def log_info(self, info: dict) -> dict:
-        """
-        Process info dictionary from @train_on_batch to summarize
-        information to pass to tensorboard for logging.
-
-        Args:
-            info (dict): dictionary of info
-
-        Returns:
-            log (dict): name -> summary statistic
-        """
         # TODO
         log = OrderedDict()
 
@@ -365,25 +328,13 @@ class CQN(PolicyAlgo, ValueAlgo):
         return log
 
     def on_epoch_end(self, epoch: int):
-        """
-        Called at the end of each epoch.
-
-        Args:
-            epoch (int): current epoch
-        """
         # TODO
         pass
 
     def set_train(self):
-        """
-        Prepare networks for training.
-        """
         self.nets.train()
         # target networks always in eval
         self.nets["critic_target"].eval()
 
     def set_discount(self, discount: float):
-        """
-        Useful function to modify discount factor if necessary (e.g. for n-step returns).
-        """
         self.discount = discount
