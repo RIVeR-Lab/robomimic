@@ -210,7 +210,6 @@ class CQN(PolicyAlgo, ValueAlgo):
             info (dict): dictionary of relevant inputs, outputs, and losses
                 that might be relevant for logging
         """
-        # TODO
         with TorchUtils.maybe_no_grad(no_grad=validate):
             info = PolicyAlgo.train_on_batch(self, batch, epoch, validate)
             
@@ -245,7 +244,6 @@ class CQN(PolicyAlgo, ValueAlgo):
             info (dict): dictionary of relevant inputs, outputs, and losses
                 that might be relevant for logging
         """
-        # TODO
         info = OrderedDict()
 
         # batch variables
@@ -290,6 +288,9 @@ class CQN(PolicyAlgo, ValueAlgo):
         next_states: dict
     ) -> dict:
         batch_size = actions.shape[0]
+
+        # TODO: redo this but iterate through layer by layer and be super 
+        # explicit about loss calculations
 
         # RL loss
 
@@ -372,7 +373,6 @@ class CQN(PolicyAlgo, ValueAlgo):
             return rewards + self.discount * (1. - dones) * q_targets
 
     def log_info(self, info: dict) -> dict:
-        # TODO
         log = OrderedDict()
 
         # record current optimizer learning rates
@@ -384,7 +384,6 @@ class CQN(PolicyAlgo, ValueAlgo):
         return log
 
     def on_epoch_end(self, epoch: int):
-        # TODO
         pass
 
     def set_train(self):

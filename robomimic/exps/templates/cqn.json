@@ -85,7 +85,7 @@
                 256
             ],
             "value_bounds": null,
-            "max_gradient_norm": 1.0,
+            "max_gradient_norm": null,
             "input_min": -1,
             "input_max": 1,
             "levels": 3,

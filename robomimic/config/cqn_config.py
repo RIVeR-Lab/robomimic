@@ -42,8 +42,8 @@ class CQNConfig(BaseConfig):
 
         ##################### Critic Network Config #####################
         self.algo.critic.layer_dims = (256, 256)
-        self.algo.critic.value_bounds = (0, 1)
-        self.algo.critic.max_gradient_norm = 1.  # L2 gradient clipping for critic (None to use no clipping)
+        self.algo.critic.value_bounds = None
+        self.algo.critic.max_gradient_norm = None  # L2 gradient clipping for critic (None to use no clipping)
 
         # C2F parameters
         self.algo.critic.input_min = -1    # action lower bound

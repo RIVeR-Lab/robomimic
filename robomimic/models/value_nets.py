@@ -392,7 +392,6 @@ class C2FNetwork(MIMO_MLP):
         goal_dict: dict | None = None,
         action: torch.Tensor | None = None
     ) -> dict:
-        # TODO
         batch_size = obs_dict[list(obs_dict.items())[0][0]].shape[0]
 
         # low and high initialized to bounds of input
