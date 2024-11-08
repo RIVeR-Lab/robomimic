@@ -16,6 +16,7 @@ class CQNConfig(BaseConfig):
         self.train.output_dir = f"../../{self.algo_name}_trained_models"
         self.train.batch_size = 256
         self.train.num_epochs = 200
+        self.train.seed = 1
 
     def algo_config(self):
         """
@@ -41,8 +42,8 @@ class CQNConfig(BaseConfig):
 
         ##################### Critic Network Config #####################
         self.algo.critic.layer_dims = (256, 256)
-        self.algo.critic.value_bounds = (-1, 1)
-        self.algo.critic.max_gradient_norm = None       # L2 gradient clipping for critic (None to use no clipping)
+        self.algo.critic.value_bounds = (0, 1)
+        self.algo.critic.max_gradient_norm = 1.  # L2 gradient clipping for critic (None to use no clipping)
 
         # C2F parameters
         self.algo.critic.input_min = -1    # action lower bound

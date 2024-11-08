@@ -398,10 +398,10 @@ class C2FNetwork(MIMO_MLP):
         # low and high initialized to bounds of input
         init_low = torch.tensor(
             [self.input_min] * self.ac_dim
-        ).to(self.device).float().repeat(batch_size, 1)
+        ).to(self.device).float().repeat(batch_size, 1).to(self.device)
         init_high = torch.tensor(
             [self.input_max] * self.ac_dim
-        ).to(self.device).float().repeat(batch_size, 1)
+        ).to(self.device).float().repeat(batch_size, 1).to(self.device)
         low, high = init_low.clone(), init_high.clone()
 
         # handle if we are given action (so find state-action value)
@@ -421,20 +421,22 @@ class C2FNetwork(MIMO_MLP):
         # iterate through levels
         for level in range(self.levels):
             # get Q-value for current level
-            prev_action = ((low + high) / 2.).to(self.device)
+            prev_action = (low + high) / 2.
             bin_values = self.forward_level(
                 obs_dict, goal_dict, level, prev_action
             )["bin_values"]
 
             # select bin (if we have action, use that, otherwise use argmax)
             if action is not None:
-                bin_selection = encoded_action[:, :, level].to(torch.int64)
+                bin_selection = encoded_action[:, :, level].long()
             else:
                 bin_selection = bin_values.argmax(dim=-1)
                 encoded_action[:, :, level] = bin_selection
 
             # update Q-values based on selected bin
-            q_values[:, :, level] = torch.gather(bin_values, 2, bin_selection.unsqueeze(-1)).squeeze(-1)
+            q_values[:, :, level] = torch.gather(
+                bin_values, 2, bin_selection.unsqueeze(-1)
+            ).squeeze(-1)
 
             # zoom in on selected bin
             low, high = C2FNetwork.zoom_in(low, high, bin_selection, self.bins)
@@ -446,7 +448,7 @@ class C2FNetwork(MIMO_MLP):
             action = C2FNetwork.decode_action(encoded_action, init_low, init_high, self.levels, self.bins)
         
         # output:
-        #   - q_values: shape (batch_size, levels, ac_dim, bins)
+        #   - q_values: shape (batch_size, ac_dim, levels)
         #   - action: shape (batch_size, ac_dim)
         #   - encoded_action: shape (batch_size, ac_dim, levels)
         return dict(
@@ -465,7 +467,13 @@ class C2FNetwork(MIMO_MLP):
         obs_dict["level"] = F.one_hot(
             torch.tensor(level), self.levels
         ).to(self.device).float().repeat(batch_size, 1)
-        return super(C2FNetwork, self).forward(obs=obs_dict, goal=goal_dict)
+        outputs = super(C2FNetwork, self).forward(obs=obs_dict, goal=goal_dict)
+        if self.value_bounds is not None:
+            outputs["bin_values"] = (
+                self._value_offset 
+                + self._value_scale * torch.tanh(outputs["bin_values"])
+            )
+        return outputs
         
     @staticmethod
     def encode_action(
@@ -492,12 +500,12 @@ class C2FNetwork(MIMO_MLP):
         high = action_max.clone()
 
         discrete_action = torch.zeros(
-            continuous_action.shape[0], continuous_action.shape[1], levels
-        ).int().to(continuous_action.device)
+            continuous_action.shape[0], continuous_action.shape[1], levels, dtype=torch.long
+        ).to(continuous_action.device)
         for l in range(levels):
             # put continuous values into bins
             slice_range = (high - low) / bins
-            idx = torch.floor((continuous_action - low) / slice_range).to(torch.int)
+            idx = torch.floor((continuous_action - low) / slice_range).long()
             idx = torch.clamp(idx, 0, bins - 1)
             discrete_action[:, :, l] = idx
 

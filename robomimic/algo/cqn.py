@@ -26,8 +26,9 @@ from collections import OrderedDict
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-import robomimic.models.value_nets as ValueNets
+from robomimic.models.value_nets import C2FNetwork
 import robomimic.utils.obs_utils as ObsUtils
 import robomimic.utils.torch_utils as TorchUtils
 
@@ -61,7 +62,6 @@ class CQN(PolicyAlgo, ValueAlgo):
         Create networks and places them into @self.nets.
         """
         self.nets = nn.ModuleDict()
-        critic_class = ValueNets.C2FNetwork
         critic_args = dict(
             obs_shapes=self.obs_shapes,
             ac_dim=self.ac_dim,
@@ -69,13 +69,15 @@ class CQN(PolicyAlgo, ValueAlgo):
             levels=self.algo_config.critic.levels,
             bins=self.algo_config.critic.bins,
             value_bounds=self.algo_config.critic.value_bounds,
-            input_bounds=(self.algo_config.critic.input_min, self.algo_config.critic.input_max),
+            input_bounds=(
+                self.algo_config.critic.input_min, self.algo_config.critic.input_max
+            ),
             goal_shapes=self.goal_shapes,
             encoder_kwargs=ObsUtils.obs_encoder_kwargs_from_config(self.obs_config.encoder),
             device=self.device,
         )
-        self.nets["critic"] = critic_class(**critic_args)
-        self.nets["critic_target"] = critic_class(**critic_args)
+        self.nets["critic"] = C2FNetwork(**critic_args)
+        self.nets["critic_target"] = C2FNetwork(**critic_args)
         self.nets = self.nets.to(self.device).float()
 
         # sync target networks at start of training
@@ -93,9 +95,8 @@ class CQN(PolicyAlgo, ValueAlgo):
         Returns:
             action (torch.Tensor): action tensor
         """
-        # TODO
         assert not self.nets.training
-        pass
+        return self.nets["critic"](obs_dict, goal_dict)["action"]
 
     def get_state_value(self, obs_dict: dict, goal_dict: dict | None = None) -> torch.Tensor:
         """
@@ -110,7 +111,7 @@ class CQN(PolicyAlgo, ValueAlgo):
         """
         assert not self.nets.training
         actions = self.get_action(obs_dict=obs_dict, goal_dict=goal_dict)
-        # TODO
+        return self.get_state_action_value(obs_dict=obs_dict, actions=actions, goal_dict=goal_dict)
     
     def get_state_action_value(
         self, obs_dict: dict, actions: torch.Tensor, goal_dict: dict | None = None
@@ -127,7 +128,7 @@ class CQN(PolicyAlgo, ValueAlgo):
             value (torch.Tensor): value tensor
         """
         assert not self.nets.training
-        # TODO
+        return self.nets["critic"](obs_dict, goal_dict, actions)["q_values"]
     
     def process_batch_for_training(self, batch):
         """
@@ -255,11 +256,8 @@ class CQN(PolicyAlgo, ValueAlgo):
         dones = batch["dones"]
         goal_s_batch = batch["goal_obs"]
 
-        # 1 if not done, 0 otherwise
-        info["dones"] = dones
-
         # compute critic loss (RL + BC loss)
-        critic_loss = self._compute_critic_loss(
+        loss_info = self._compute_critic_loss(
             states=s_batch,
             actions=a_batch,
             goal_states=goal_s_batch,
@@ -267,16 +265,15 @@ class CQN(PolicyAlgo, ValueAlgo):
             dones=dones,
             next_states=ns_batch,
         )
-        info["critic/critic_loss"] = critic_loss
-
-        print(f'\n\n{critic_loss=}\n\n')
-        exit()
+        info["critic/critic_loss"] = loss_info['loss'].detach().item()
+        info["critic/rl_loss"] = loss_info['rl_loss'].detach().item()
+        info["critic/bc_loss"] = loss_info['bc_loss'].detach().item()
 
         if not validate:
             critic_grad_norms = TorchUtils.backprop_for_loss(
                 net=self.nets["critic"],
                 optim=self.optimizers["critic"],
-                loss=critic_loss, 
+                loss=loss_info['loss'], 
                 max_grad_norm=self.algo_config.critic.max_gradient_norm,
             )
             info["critic/critic_grad_norms"] = critic_grad_norms
@@ -291,22 +288,66 @@ class CQN(PolicyAlgo, ValueAlgo):
         rewards: torch.Tensor,
         dones: torch.Tensor,
         next_states: dict
-    ) -> torch.Tensor:
-        print('\n\n')
+    ) -> dict:
+        batch_size = actions.shape[0]
+
+        # RL loss
+
         q_targets = self._get_target_values(next_states, goal_states, rewards, dones)
-        q_values = self.nets["critic"](states, goal_states)['q_values']
-        rl_loss = nn.MSELoss()(q_values, q_targets)
+        rl_loss = self._compute_rl_loss(states, goal_states, q_targets)
 
-        critic_dict = self.nets["critic"](states, goal_states, actions)
-        critic_action = critic_dict['action']
-        q_critic = critic_dict['q_values']
-        print(f'{q_critic[0]=}')
-        print(f'{q_targets[0]=}')
-        print(f'{critic_action[0]=}')
-        print(f'{actions[0]=}')
+        # BC loss
 
-        print('\n\n')
-        exit()
+        low = torch.tensor(
+            [self.algo_config.critic.input_min] * self.ac_dim
+        ).to(self.device).float().repeat(batch_size, 1).to(self.device)
+        high = torch.tensor(
+            [self.algo_config.critic.input_max] * self.ac_dim
+        ).to(self.device).float().repeat(batch_size, 1).to(self.device)
+
+        # compute q values for expert action
+        expert_dict = self.nets["critic"](states, goal_states, actions)
+        q_expert = expert_dict['q_values']
+        a_expert_enc = expert_dict['encoded_action']
+
+        # compute q values for c2f network with margin
+        margin = (1 - F.one_hot(
+            a_expert_enc, num_classes=self.algo_config.critic.bins
+        ).to(self.device)) * self.algo_config.optim_params.bc_margin
+        q_values = torch.zeros(
+            batch_size, self.ac_dim, self.algo_config.critic.levels
+        ).to(self.device)
+
+        # to only use margin when expert and c2f are looking at same bin:
+        prev_wrong_bin = torch.zeros(batch_size, dtype=torch.bool).to(self.device)
+
+        for level in range(self.algo_config.critic.levels):
+            prev_action = (low + high) / 2.
+            bin_values = self.nets["critic"].forward_level(
+                states, goal_states, level, prev_action
+            )['bin_values']
+            bin_values += margin[:, :, level] * ~prev_wrong_bin[:, None, None]
+            bin_selection = bin_values.argmax(dim=-1)
+            prev_wrong_bin += (bin_selection != a_expert_enc[:, :, level]).any(1)
+
+            q_values[:, :, level] = torch.gather(
+                bin_values, 2, bin_selection.unsqueeze(-1)
+            ).squeeze(-1)
+
+            low, high = C2FNetwork.zoom_in(
+                low, high, bin_selection, self.algo_config.critic.bins
+            )
+        
+        bc_loss = (q_values - q_expert).sum()
+
+        rl_loss /= (batch_size * self.ac_dim * self.algo_config.critic.levels)
+        bc_loss /= (batch_size * self.ac_dim * self.algo_config.critic.levels)
+        loss = (
+            self.algo_config.optim_params.bc_loss_weight * bc_loss +
+            self.algo_config.optim_params.rl_loss_weight * rl_loss
+        )
+
+        return dict(loss=loss, rl_loss=rl_loss, bc_loss=bc_loss)
     
     def _compute_rl_loss(
         self,
@@ -315,7 +356,7 @@ class CQN(PolicyAlgo, ValueAlgo):
         q_targets: torch.Tensor,
     ):
         q_values = self.nets['critic'](states, goal_states)['q_values']
-        return nn.MSELoss()(q_values, q_targets)
+        return nn.MSELoss(reduction='sum')(q_values, q_targets)
 
     def _get_target_values(
         self,
@@ -339,6 +380,7 @@ class CQN(PolicyAlgo, ValueAlgo):
             for i, param_group in enumerate(self.optimizers[k].param_groups):
                 log["Optimizer/{}{}_lr".format(k, i)] = param_group["lr"]
 
+        log.update(info)
         return log
 
     def on_epoch_end(self, epoch: int):
