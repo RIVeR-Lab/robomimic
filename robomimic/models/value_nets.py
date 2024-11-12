@@ -381,7 +381,8 @@ class C2FNetwork(MIMO_MLP):
 
     def output_shape(self, input_shape : Iterable[int] | None = None) -> list[int]:
         return dict(
-            q_values=(self.ac_dim, self.levels), 
+            q_values=(self.ac_dim, self.levels, self.bins), 
+            q_values_a=(self.ac_dim, self.levels), 
             action=(self.ac_dim,),
             value=(1,)
         )
@@ -415,7 +416,8 @@ class C2FNetwork(MIMO_MLP):
             ).int().to(self.device)
         
         # initialize Q-values
-        q_values = torch.zeros(batch_size, self.ac_dim, self.levels).to(self.device)
+        q_values = torch.zeros(batch_size, self.ac_dim, self.levels, self.bins).to(self.device)
+        q_values_a = torch.zeros(batch_size, self.ac_dim, self.levels).to(self.device)
 
         # iterate through levels
         for level in range(self.levels):
@@ -424,6 +426,7 @@ class C2FNetwork(MIMO_MLP):
             bin_values = self.forward_level(
                 obs_dict, goal_dict, level, prev_action
             )["bin_values"]
+            q_values[:, ]
 
             # select bin (if we have action, use that, otherwise use argmax)
             if action is not None:
@@ -433,7 +436,7 @@ class C2FNetwork(MIMO_MLP):
                 encoded_action[:, :, level] = bin_selection
 
             # update Q-values based on selected bin
-            q_values[:, :, level] = torch.gather(
+            q_values_a[:, :, level] = torch.gather(
                 bin_values, 2, bin_selection.unsqueeze(-1)
             ).squeeze(-1)
 
@@ -447,11 +450,12 @@ class C2FNetwork(MIMO_MLP):
             action = C2FNetwork.decode_action(encoded_action, init_low, init_high, self.levels, self.bins)
         
         # output:
-        #   - q_values: shape (batch_size, ac_dim, levels)
+        #   - q_values: shape (batch_size, ac_dim, levels, bins)
+        #   - q_values_a: shape (batch_size, ac_dim, levels)
         #   - action: shape (batch_size, ac_dim)
         #   - encoded_action: shape (batch_size, ac_dim, levels)
         return dict(
-            action=action, q_values=q_values, encoded_action=encoded_action
+            action=action, q_values=q_values, q_values_a=q_values_a, encoded_action=encoded_action
         )
     
     def forward_level(

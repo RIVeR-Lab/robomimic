@@ -128,7 +128,7 @@ class CQN(PolicyAlgo, ValueAlgo):
             value (torch.Tensor): value tensor
         """
         assert not self.nets.training
-        return self.nets["critic"](obs_dict, goal_dict, actions)["q_values"]
+        return self.nets["critic"](obs_dict, goal_dict, actions)["q_values_a"]
     
     def process_batch_for_training(self, batch):
         """
@@ -143,16 +143,14 @@ class CQN(PolicyAlgo, ValueAlgo):
             input_batch (dict): processed and filtered batch that will be used 
                 for training 
         """
-        # TODO: check if this is correct
         input_batch = dict()
 
         # n-step returns
         n_step = self.algo_config.n_step
         assert batch["actions"].shape[1] >= n_step
 
-        # remove temporal batches for all
-        input_batch["obs"] = {k: batch["obs"][k][:, 0, :] for k in batch["obs"]}
-        input_batch["next_obs"] = {k: batch["next_obs"][k][:, n_step - 1, :] for k in batch["next_obs"]}
+        input_batch["obs"] = {k: batch["obs"][k][:, :, :] for k in batch["obs"]}
+        input_batch["next_obs"] = {k: batch["next_obs"][k][:, :, :] for k in batch["next_obs"]}
         input_batch["goal_obs"] = batch.get("goal_obs", None) # goals may not be present
         input_batch["actions"] = batch["actions"][:, 0, :]
 
@@ -177,17 +175,18 @@ class CQN(PolicyAlgo, ValueAlgo):
             if done_inds.shape[0] > 0:
                 input_batch["rewards"][done_inds] = input_batch["rewards"][done_inds] * (1. / (1. - self.discount))
         
-        # print('\n\n\n\n')
-        # print(f'{input_batch["obs"]["object"].shape=}')
-        # print(f'{input_batch["obs"]["agentview_image"].shape=}')
-        # print(f'{input_batch["obs"]["robot0_eye_in_hand_image"].shape=}')
-        # print(f'{input_batch["obs"]["robot0_eef_pos"].shape=}')
-        # print(f'{input_batch["obs"]["robot0_eef_quat"].shape=}')
-        # print(f'{input_batch["obs"]["robot0_gripper_qpos"].shape=}')
-        # print(f'{input_batch["actions"].shape=}')
-        # print(f'{input_batch["rewards"].shape=}')
-        # print(f'{input_batch["dones"].shape=}')
-        # print('\n\n\n\n')
+        print('\n\n\n\n')
+        print(f'{input_batch["obs"]["object"].shape=}')
+        print(f'{input_batch["obs"]["agentview_image"].shape=}')
+        print(f'{input_batch["obs"]["robot0_eye_in_hand_image"].shape=}')
+        print(f'{input_batch["obs"]["robot0_eef_pos"].shape=}')
+        print(f'{input_batch["obs"]["robot0_eef_quat"].shape=}')
+        print(f'{input_batch["obs"]["robot0_gripper_qpos"].shape=}')
+        print(f'{input_batch["actions"].shape=}')
+        print(f'{input_batch["rewards"].shape=}')
+        print(f'{input_batch["dones"].shape=}')
+        print('\n\n\n\n')
+        exit()
 
         # we move to device first before float conversion because image observation modalities will be uint8 -
         # this minimizes the amount of data transferred to GPU
@@ -289,57 +288,13 @@ class CQN(PolicyAlgo, ValueAlgo):
     ) -> dict:
         batch_size = actions.shape[0]
 
-        # TODO: redo this but iterate through layer by layer and be super 
-        # explicit about loss calculations
-
         # RL loss
-
         q_targets = self._get_target_values(next_states, goal_states, rewards, dones)
         rl_loss = self._compute_rl_loss(states, goal_states, q_targets)
 
         # BC loss
+        bc_loss = self._compute_bc_loss(states, goal_states, actions)
 
-        low = torch.tensor(
-            [self.algo_config.critic.input_min] * self.ac_dim
-        ).to(self.device).float().repeat(batch_size, 1).to(self.device)
-        high = torch.tensor(
-            [self.algo_config.critic.input_max] * self.ac_dim
-        ).to(self.device).float().repeat(batch_size, 1).to(self.device)
-
-        # compute q values for expert action
-        expert_dict = self.nets["critic"](states, goal_states, actions)
-        q_expert = expert_dict['q_values']
-        a_expert_enc = expert_dict['encoded_action']
-
-        # compute q values for c2f network with margin
-        margin = (1 - F.one_hot(
-            a_expert_enc, num_classes=self.algo_config.critic.bins
-        ).to(self.device)) * self.algo_config.optim_params.bc_margin
-        q_values = torch.zeros(
-            batch_size, self.ac_dim, self.algo_config.critic.levels
-        ).to(self.device)
-
-        # to only use margin when expert and c2f are looking at same bin:
-        prev_wrong_bin = torch.zeros(batch_size, dtype=torch.bool).to(self.device)
-
-        for level in range(self.algo_config.critic.levels):
-            prev_action = (low + high) / 2.
-            bin_values = self.nets["critic"].forward_level(
-                states, goal_states, level, prev_action
-            )['bin_values']
-            bin_values += margin[:, :, level] * ~prev_wrong_bin[:, None, None]
-            bin_selection = bin_values.argmax(dim=-1)
-            prev_wrong_bin += (bin_selection != a_expert_enc[:, :, level]).any(1)
-
-            q_values[:, :, level] = torch.gather(
-                bin_values, 2, bin_selection.unsqueeze(-1)
-            ).squeeze(-1)
-
-            low, high = C2FNetwork.zoom_in(
-                low, high, bin_selection, self.algo_config.critic.bins
-            )
-        
-        bc_loss = (q_values - q_expert).sum()
 
         rl_loss /= (batch_size * self.ac_dim * self.algo_config.critic.levels)
         bc_loss /= (batch_size * self.ac_dim * self.algo_config.critic.levels)
@@ -355,9 +310,25 @@ class CQN(PolicyAlgo, ValueAlgo):
         states: dict,
         goal_states: dict | None,
         q_targets: torch.Tensor,
-    ):
-        q_values = self.nets['critic'](states, goal_states)['q_values']
-        return nn.MSELoss(reduction='sum')(q_values, q_targets)
+    ) -> torch.Tensor:
+        q_values = self.nets['critic'](states, goal_states)['q_values_a']
+        return F.mse_loss(q_values, q_targets, reduction='sum')
+    
+    def _compute_bc_loss(
+        self,
+        states: dict,
+        goal_states: dict | None,
+        actions: torch.Tensor,
+    ) -> torch.Tensor:
+        critic_dict = self.nets['critic'](states, goal_states, actions)
+        q_values = critic_dict['q_values']
+        q_values_a = critic_dict['q_values_a']
+        encoded_actions = critic_dict['encoded_action']
+        margin = self.algo_config.optim_params.bc_margin * (
+            1. - F.one_hot(encoded_actions, num_classes=self.algo_config.critic.bins)
+        ).to(self.device)
+        q_max_margin = torch.max(q_values + margin, dim=-1).values
+        return F.leaky_relu(q_max_margin - q_values_a, negative_slope=0.1).sum()
 
     def _get_target_values(
         self,
@@ -367,7 +338,7 @@ class CQN(PolicyAlgo, ValueAlgo):
         dones: torch.Tensor
     ) -> torch.Tensor:
         with torch.no_grad():
-            q_targets = self.nets["critic_target"](next_states, goal_states)['q_values']
+            q_targets = self.nets["critic_target"](next_states, goal_states)['q_values_a']
             rewards = rewards[:, None].expand(-1, *q_targets.shape[1:])
             dones = dones[:, None].expand(-1, *q_targets.shape[1:])
             return rewards + self.discount * (1. - dones) * q_targets
